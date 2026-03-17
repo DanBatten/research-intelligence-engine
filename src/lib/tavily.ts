@@ -1,0 +1,32 @@
+import { config } from "../config.js";
+import { logger } from "./logger.js";
+
+export interface TavilyResult {
+  title: string;
+  url: string;
+  content: string;
+  score: number;
+}
+
+export async function tavilySearch(query: string): Promise<TavilyResult[]> {
+  logger.debug({ query }, "Tavily search");
+
+  const response = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: config.TAVILY_API_KEY,
+      query,
+      search_depth: config.TAVILY_SEARCH_DEPTH,
+      max_results: config.TAVILY_MAX_RESULTS,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Tavily search failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as { results: TavilyResult[] };
+  logger.debug({ resultCount: data.results.length }, "Tavily search complete");
+  return data.results;
+}

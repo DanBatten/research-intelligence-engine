@@ -1,0 +1,40 @@
+{
+  "name": "deep-research-v2",
+  "version": "1.0.0",
+  "description": "10-stage structured research pipeline with Slack bot + Notion export",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup src/index.ts src/integrations/slack/app.ts --format esm --dts",
+    "start": "node dist/integrations/slack/app.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@notionhq/client": "^2.2.1",
+    "@slack/bolt": "^4.1.0",
+    "@slack/web-api": "^7.15.0",
+    "dotenv": "^16.4.0",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pdf-parse": "^1.1.4",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

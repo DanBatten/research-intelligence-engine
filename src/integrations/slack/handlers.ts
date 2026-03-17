@@ -1,0 +1,233 @@
+import type { App } from "@slack/bolt";
+import type { WebClient } from "@slack/web-api";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { z } from "zod";
+import { config } from "../../config.js";
+import { logger } from "../../lib/logger.js";
+import { callStructured } from "../../lib/llm.js";
+import { parseFile, combineDocuments } from "../../parsers/index.js";
+import { PipelineRunner } from "../../pipeline/runner.js";
+import { NotionExporter } from "../notion/exporter.js";
+import { postProgress } from "./progress.js";
+
+const IntentSchema = z.object({
+  projectName: z.string(),
+  projectDescription: z.string(),
+  needsClarification: z.boolean(),
+  clarificationQuestion: z.string().optional(),
+});
+
+// Keyed by userId — allows concurrent pipelines across users,
+// but prevents the same user from double-triggering.
+const activeJobs = new Map<string, string>();
+
+async function parseUserIntent(
+  text: string,
+  hasFiles: boolean
+): Promise<z.infer<typeof IntentSchema>> {
+  return callStructured({
+    model: config.MODEL_INTENT_PARSE,
+    system: `Parse this Slack message to extract a research project name and description.
+If the message is unclear about what brand/project to research, set needsClarification to true.
+If files are attached, the user likely wants to start research using those files as brand context.`,
+    userMessage: `Message: "${text}"\nHas file attachments: ${hasFiles}`,
+    schema: IntentSchema,
+    schemaName: "parse_intent",
+  });
+}
+
+async function downloadSlackFile(
+  fileId: string,
+  client: WebClient,
+  destDir: string
+): Promise<string> {
+  const info = await client.files.info({ file: fileId });
+  const file = info.file!;
+  const url = file.url_private_download!;
+  const filename = file.name!;
+
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` },
+  });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const destPath = path.join(destDir, filename);
+  await fs.writeFile(destPath, buffer);
+  return destPath;
+}
+
+async function runPipelineAsync(
+  client: WebClient,
+  channel: string,
+  threadTs: string,
+  userId: string,
+  userMessage: string,
+  fileIds: string[],
+  projectName: string
+) {
+  const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionDir = path.join(config.SESSIONS_DIR, sessionId);
+  const uploadsDir = path.join(sessionDir, "uploads");
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  try {
+    // Download files
+    const filePaths: string[] = [];
+    for (const fileId of fileIds) {
+      try {
+        const filePath = await downloadSlackFile(fileId, client, uploadsDir);
+        filePaths.push(filePath);
+        logger.info({ fileId, filePath }, "Downloaded file");
+      } catch (err) {
+        logger.warn(
+          { fileId, error: (err as Error).message },
+          "Failed to download file, skipping"
+        );
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `Warning: Could not download a file (${(err as Error).message}). Continuing with remaining documents.`,
+        });
+      }
+    }
+
+    // Parse documents
+    const docs = [];
+    for (const fp of filePaths) {
+      try {
+        const doc = await parseFile(fp);
+        docs.push(doc);
+      } catch (err) {
+        logger.warn(
+          { file: fp, error: (err as Error).message },
+          "Failed to parse file, skipping"
+        );
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `Warning: Could not parse ${path.basename(fp)} (${(err as Error).message}). Continuing with remaining documents.`,
+        });
+      }
+    }
+
+    // Build brand overview
+    const brandOverview = combineDocuments(userMessage, docs);
+
+    // Create pipeline runner
+    const runner = new PipelineRunner(
+      { projectName, brandOverview },
+      {
+        sessionDir,
+        onProgress: (event) =>
+          postProgress(client, channel, threadTs, event),
+      }
+    );
+
+    // Run pipeline
+    const finalState = await runner.run();
+
+    // Export to Notion
+    try {
+      const exporter = new NotionExporter();
+      const notionUrl = await exporter.exportPipeline(finalState);
+
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Research complete for *${projectName}*!\n\nView results: ${notionUrl}\n\nSession data: \`${sessionDir}\``,
+      });
+    } catch (err) {
+      logger.error(
+        { error: (err as Error).message },
+        "Notion export failed"
+      );
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Research complete for *${projectName}*, but Notion export failed: ${(err as Error).message}\n\nFull results saved to: \`${sessionDir}/state.json\``,
+      });
+    }
+  } catch (err) {
+    logger.error(
+      { error: (err as Error).message, sessionId },
+      "Pipeline failed"
+    );
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Pipeline failed for *${projectName}*: ${(err as Error).message}\n\nSession data: \`${sessionDir}\``,
+    });
+  } finally {
+    activeJobs.delete(userId);
+  }
+}
+
+export function registerHandlers(app: App) {
+  app.event("message", async ({ event, client }) => {
+    // Ignore bot messages
+    if ("bot_id" in event) return;
+    // Only handle DMs (im) or messages with text
+    if (!("text" in event) || !event.text) return;
+
+    const userId =
+      "user" in event ? (event.user as string) : "unknown";
+    const channel = event.channel;
+    const text = event.text;
+    const threadTs = event.ts;
+
+    // Check for active job per user
+    if (activeJobs.has(userId)) {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `You already have a research pipeline running (*${activeJobs.get(userId)}*). Please wait for it to complete.`,
+      });
+      return;
+    }
+
+    // Get file IDs
+    const fileIds: string[] = [];
+    if ("files" in event && Array.isArray(event.files)) {
+      for (const f of event.files) {
+        if (f.id) fileIds.push(f.id);
+      }
+    }
+
+    // Parse intent
+    const intent = await parseUserIntent(text, fileIds.length > 0);
+
+    if (intent.needsClarification) {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text:
+          intent.clarificationQuestion ??
+          "Could you clarify what brand or project you'd like me to research?",
+      });
+      return;
+    }
+
+    // Mark as active for this user
+    activeJobs.set(userId, intent.projectName);
+
+    // Acknowledge
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Research queued for *${intent.projectName}*. Starting 10-stage pipeline...\n\nI'll post progress updates here.`,
+    });
+
+    // Fire and forget — don't await
+    runPipelineAsync(
+      client,
+      channel,
+      threadTs,
+      userId,
+      text,
+      fileIds,
+      intent.projectName
+    ).catch((err) => {
+      logger.error(err, "Unhandled error in pipeline async");
+    });
+  });
+}
