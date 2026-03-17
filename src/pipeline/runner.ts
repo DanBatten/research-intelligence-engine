@@ -12,12 +12,12 @@ import { stage6 } from "./stages/s6-tension-mapping.js";
 import { stage7 } from "./stages/s7-insight-synthesis.js";
 import { stage8 } from "./stages/s8-decision-scoring.js";
 import { stage9 } from "./stages/s9-cross-topic-synthesis.js";
+import type { NotionExporter } from "../integrations/notion/exporter.js";
 import type {
   PipelineState,
   TopicState,
   StageDefinition,
   ProgressCallback,
-  ProgressEvent,
   PipelineRunnerOptions,
   ResearchTopic,
 } from "./types.js";
@@ -40,6 +40,7 @@ export class PipelineRunner {
   private onProgress: ProgressCallback;
   private maxRetries: number;
   private retryDelayMs: number;
+  private notion: NotionExporter | undefined;
 
   constructor(state: PipelineState, opts: PipelineRunnerOptions) {
     this.state = state;
@@ -47,6 +48,7 @@ export class PipelineRunner {
     this.onProgress = opts.onProgress ?? (() => {});
     this.maxRetries = opts.maxRetries ?? config.MAX_RETRIES_PER_STAGE;
     this.retryDelayMs = opts.retryDelayMs ?? config.RETRY_DELAY_MS;
+    this.notion = opts.notion;
   }
 
   static async resume(
@@ -65,6 +67,10 @@ export class PipelineRunner {
 
   private async save(): Promise<void> {
     await fs.mkdir(this.sessionDir, { recursive: true });
+    // Persist Notion page IDs so resume can continue exporting
+    if (this.notion) {
+      this.state.notionPageIds = this.notion.getPageIds();
+    }
     await fs.writeFile(
       path.join(this.sessionDir, "state.json"),
       JSON.stringify(this.state, null, 2)
@@ -110,6 +116,14 @@ export class PipelineRunner {
         2
       )
     );
+  }
+
+  private async notionStatus(text: string, done?: boolean): Promise<void> {
+    try {
+      await this.notion?.updateStatus(text, done);
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion status update failed");
+    }
   }
 
   private async executeStage<TIn, TOut>(
@@ -196,12 +210,22 @@ export class PipelineRunner {
   ): Promise<TopicState> {
     const state: TopicState = { topic, topicIndex };
 
-    // Stage 2: Deep Research (custom execute with Tavily)
+    // Create topic page in Notion upfront
+    try {
+      await this.notion?.createTopicPage(topicIndex, topic.title);
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Failed to create Notion topic page");
+    }
+
+    // Stage 2: Deep Research
     state.research = await this.executeStage(
       stage2,
       { topic, brandOverview },
       topicIndex
     );
+    try { await this.notion?.exportTopicResearch(topicIndex, state.research); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for research");
+    }
 
     // Stage 3: Atomic Extraction
     state.atomicUnits = await this.executeStage(
@@ -216,6 +240,9 @@ export class PipelineRunner {
       { atomicUnits: state.atomicUnits, topicTitle: topic.title },
       topicIndex
     );
+    try { await this.notion?.exportTopicAtomicUnits(topicIndex, state.normalized); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for atomic units");
+    }
 
     // Stage 5: Clustering
     state.clusters = await this.executeStage(
@@ -223,6 +250,9 @@ export class PipelineRunner {
       { normalizedUnits: state.normalized },
       topicIndex
     );
+    try { await this.notion?.exportTopicClusters(topicIndex, state.clusters); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for clusters");
+    }
 
     // Stage 6: Tension Mapping
     state.tensions = await this.executeStage(
@@ -230,6 +260,9 @@ export class PipelineRunner {
       { clusters: state.clusters, normalizedUnits: state.normalized },
       topicIndex
     );
+    try { await this.notion?.exportTopicTensions(topicIndex, state.tensions); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for tensions");
+    }
 
     // Stage 7: Insight Synthesis
     state.insights = await this.executeStage(
@@ -241,6 +274,9 @@ export class PipelineRunner {
       },
       topicIndex
     );
+    try { await this.notion?.exportTopicInsights(topicIndex, state.insights); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for insights");
+    }
 
     // Stage 8: Decision Scoring
     state.scoring = await this.executeStage(
@@ -248,23 +284,39 @@ export class PipelineRunner {
       { insights: state.insights, tensions: state.tensions },
       topicIndex
     );
+    try { await this.notion?.exportTopicScoring(topicIndex, state.scoring); } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion export failed for scoring");
+    }
 
     return state;
   }
 
   async run(): Promise<PipelineState> {
+    // Initialize Notion project page
+    try {
+      await this.notion?.initProject(this.state.projectName, this.state.brandOverview);
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, "Notion init failed, continuing without Notion");
+      this.notion = undefined;
+    }
+
     // Stage 0 (passthrough — brandOverview is the input)
     await this.saveStageOutput(0, this.state.brandOverview);
 
     // Stage 1: Topic Definition
     if (!this.state.topics) {
       logger.info("Running Stage 1: Topic Definition");
+      await this.notionStatus("Pipeline running — Stage 1/9: Topic Definition");
       const s1 = await this.executeStage(stage1, {
         brandOverview: this.state.brandOverview,
       });
       this.state.topics = s1.topics;
       this.state.overlapCheck = s1.overlapCheck;
       await this.save();
+
+      try { await this.notion?.exportTopics(this.state.topics); } catch (err) {
+        logger.warn({ error: (err as Error).message }, "Notion export failed for topics");
+      }
     }
 
     // Stages 2-8 per topic (parallel)
@@ -283,6 +335,10 @@ export class PipelineRunner {
       logger.info(
         { pending: pendingTopics.length, completed: completedTopics.size },
         "Running per-topic pipelines"
+      );
+
+      await this.notionStatus(
+        `Pipeline running — Stages 2-8: Researching ${pendingTopics.length} topics in parallel`
       );
 
       const newResults = await Promise.allSettled(
@@ -307,6 +363,9 @@ export class PipelineRunner {
     // Stage 9 (requires minimum 3 successful topics)
     const successfulTopics = this.state.topicResults;
     if (successfulTopics.length < 3) {
+      await this.notionStatus(
+        `Pipeline failed — only ${successfulTopics.length}/6 topics succeeded (minimum 3 required)`
+      );
       throw new Error(
         `Only ${successfulTopics.length}/6 topics succeeded. Minimum 3 required for cross-topic synthesis.`
       );
@@ -317,12 +376,26 @@ export class PipelineRunner {
         { topicCount: successfulTopics.length },
         "Running Stage 9: Cross-Topic Synthesis"
       );
+      await this.notionStatus(
+        `Pipeline running — Stage 9/9: Cross-Topic Synthesis (${successfulTopics.length} topics)`
+      );
+
       this.state.synthesis = await this.executeStage(stage9, {
         allTopicResults: successfulTopics,
         brandOverview: this.state.brandOverview,
       });
+
+      try { await this.notion?.exportSynthesis(this.state.synthesis); } catch (err) {
+        logger.warn({ error: (err as Error).message }, "Notion export failed for synthesis");
+      }
+
       await this.save();
     }
+
+    await this.notionStatus(
+      `Pipeline complete — ${successfulTopics.length}/6 topics, ${this.state.synthesis.openStrategicQuestions.length} strategic questions`,
+      true
+    );
 
     return this.state;
   }

@@ -27,8 +27,9 @@ export async function parseFile(filePath: string): Promise<ParsedDocument> {
   }
 
   if (ext === ".xlsx" || ext === ".xls") {
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.readFile(filePath);
+    const XLSX = (await import("xlsx")).default;
+    const buffer = await fs.readFile(filePath);
+    const workbook = XLSX.read(buffer);
     const sheets = workbook.SheetNames.map((name) => {
       const sheet = workbook.Sheets[name]!;
       return `--- Sheet: ${name} ---\n${XLSX.utils.sheet_to_csv(sheet)}`;
@@ -37,8 +38,9 @@ export async function parseFile(filePath: string): Promise<ParsedDocument> {
   }
 
   if (ext === ".csv") {
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.readFile(filePath);
+    const XLSX = (await import("xlsx")).default;
+    const buffer = await fs.readFile(filePath);
+    const workbook = XLSX.read(buffer);
     const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
     return { fileName, content: XLSX.utils.sheet_to_csv(sheet), mimeType: "text/csv" };
   }

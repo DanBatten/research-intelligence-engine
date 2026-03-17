@@ -1,6 +1,7 @@
 export type {
   TopicState,
   PipelineState,
+  NotionPageIds,
   StageDefinition,
   ProgressEvent,
   ProgressCallback,

@@ -21,6 +21,12 @@ export interface TopicState {
   scoring?: S8Output;
 }
 
+export interface NotionPageIds {
+  projectPageId?: string;
+  statusBlockId?: string;
+  topicPageIds: Record<number, string>;
+}
+
 export interface PipelineState {
   projectName: string;
   brandOverview: string;
@@ -28,6 +34,7 @@ export interface PipelineState {
   overlapCheck?: string;
   topicResults?: TopicState[];
   synthesis?: S9Output;
+  notionPageIds?: NotionPageIds;
 }
 
 export interface StageDefinition<TIn = unknown, TOut = unknown> {
@@ -54,6 +61,7 @@ export interface PipelineRunnerOptions {
   onProgress?: ProgressCallback;
   maxRetries?: number;
   retryDelayMs?: number;
+  notion?: import("../integrations/notion/exporter.js").NotionExporter;
 }
 
 export type {

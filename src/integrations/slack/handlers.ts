@@ -113,40 +113,31 @@ async function runPipelineAsync(
     // Build brand overview
     const brandOverview = combineDocuments(userMessage, docs);
 
-    // Create pipeline runner
+    // Create Notion exporter (incremental — publishes each stage as it completes)
+    const notion = new NotionExporter();
+
+    // Create pipeline runner with Notion wired in
     const runner = new PipelineRunner(
       { projectName, brandOverview },
       {
         sessionDir,
+        notion,
         onProgress: (event) =>
           postProgress(client, channel, threadTs, event),
       }
     );
 
-    // Run pipeline
-    const finalState = await runner.run();
+    // Run pipeline (Notion pages are created incrementally during the run)
+    await runner.run();
 
-    // Export to Notion
-    try {
-      const exporter = new NotionExporter();
-      const notionUrl = await exporter.exportPipeline(finalState);
-
-      await client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Research complete for *${projectName}*!\n\nView results: ${notionUrl}\n\nSession data: \`${sessionDir}\``,
-      });
-    } catch (err) {
-      logger.error(
-        { error: (err as Error).message },
-        "Notion export failed"
-      );
-      await client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Research complete for *${projectName}*, but Notion export failed: ${(err as Error).message}\n\nFull results saved to: \`${sessionDir}/state.json\``,
-      });
-    }
+    const notionUrl = notion.getProjectUrl();
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: notionUrl
+        ? `Research complete for *${projectName}*!\n\nView results: ${notionUrl}`
+        : `Research complete for *${projectName}*!\n\nSession data: \`${sessionDir}\``,
+    });
   } catch (err) {
     logger.error(
       { error: (err as Error).message, sessionId },
