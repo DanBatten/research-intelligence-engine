@@ -168,6 +168,22 @@ async function driveGet(url: string): Promise<Response> {
 }
 
 export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
+  // First verify the service account can see the folder itself
+  const folderCheckUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name`;
+  const folderRes = await driveGet(folderCheckUrl);
+  if (!folderRes.ok) {
+    const body = await folderRes.text();
+    logger.warn(
+      { folderId, status: folderRes.status, body: body.slice(0, 300) },
+      "Cannot access folder directly — sharing may not be set up"
+    );
+    throw new Error(
+      `Cannot access folder (${folderRes.status}). Share the folder with the service account email as Viewer.`
+    );
+  }
+  const folderMeta = await folderRes.json();
+  logger.info({ folderId, folderName: (folderMeta as any).name }, "Folder access confirmed");
+
   const q = encodeURIComponent(
     `'${folderId}' in parents and trashed = false`
   );
@@ -177,11 +193,6 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
   const res = await driveGet(url);
   if (!res.ok) {
     const body = await res.text();
-    if (res.status === 403 || res.status === 404) {
-      throw new Error(
-        "Cannot access folder. Ensure the folder is shared with the service account or 'Anyone with the link'."
-      );
-    }
     throw new Error(`Drive API error ${res.status}: ${body}`);
   }
 
