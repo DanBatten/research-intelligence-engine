@@ -107,7 +107,12 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
     throw new Error(`Drive API error ${res.status}: ${body}`);
   }
 
-  const data = (await res.json()) as { files: DriveFile[] };
+  const text = await res.text();
+  logger.info(
+    { folderId, status: res.status, body: text.slice(0, 500) },
+    "Drive folder listing raw response"
+  );
+  const data = JSON.parse(text) as { files?: DriveFile[] };
   return data.files ?? [];
 }
 
