@@ -98,6 +98,10 @@ async function runPipelineAsync(
     }
 
     // Download Google Drive files
+    logger.info(
+      { driveLinksCount: driveLinks.length, hasApiKey: !!config.GOOGLE_API_KEY },
+      "Drive download check"
+    );
     if (driveLinks.length > 0) {
       if (!config.GOOGLE_API_KEY) {
         await client.chat.postMessage({
@@ -108,6 +112,10 @@ async function runPipelineAsync(
       } else {
         try {
           const driveResult = await downloadDriveLinks(driveLinks, uploadsDir);
+          logger.info(
+            { fileCount: driveResult.files.length, errorCount: driveResult.errors.length, truncated: driveResult.truncated },
+            "Drive download complete"
+          );
 
           for (const df of driveResult.files) {
             filePaths.push(df.filePath);
@@ -241,6 +249,10 @@ export function registerHandlers(app: App) {
 
     // Detect Google Drive links
     const driveLinks = extractDriveLinks(text);
+    logger.info(
+      { driveLinks, fileIds, hasApiKey: !!config.GOOGLE_API_KEY },
+      "Parsed message attachments"
+    );
 
     // Parse intent
     const hasFiles = fileIds.length > 0 || driveLinks.length > 0;
@@ -261,10 +273,24 @@ export function registerHandlers(app: App) {
     activeJobs.set(userId, intent.projectName);
 
     // Acknowledge
+    const ackParts = [`Research queued for *${intent.projectName}*.`];
+    if (driveLinks.length > 0 && config.GOOGLE_API_KEY) {
+      const folderCount = driveLinks.filter((l) => l.type === "folder").length;
+      const fileCount = driveLinks.filter((l) => l.type === "file").length;
+      const linkDesc = [
+        folderCount > 0 ? `${folderCount} Drive folder${folderCount > 1 ? "s" : ""}` : "",
+        fileCount > 0 ? `${fileCount} Drive file${fileCount > 1 ? "s" : ""}` : "",
+      ].filter(Boolean).join(" and ");
+      ackParts.push(`Downloading ${linkDesc}...`);
+    }
+    if (fileIds.length > 0) {
+      ackParts.push(`Processing ${fileIds.length} uploaded file${fileIds.length > 1 ? "s" : ""}...`);
+    }
+    ackParts.push("Starting 10-stage pipeline...\n\nI'll post progress updates here.");
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
-      text: `Research queued for *${intent.projectName}*. Starting 10-stage pipeline...\n\nI'll post progress updates here.`,
+      text: ackParts.join(" "),
     });
 
     // Fire and forget — don't await
