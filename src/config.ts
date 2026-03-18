@@ -26,7 +26,7 @@ const ConfigSchema = z.object({
   MAX_CONCURRENT_API_CALLS: z.coerce.number().default(3),
   MAX_RETRIES_PER_STAGE: z.coerce.number().default(2),
   RETRY_DELAY_MS: z.coerce.number().default(5000),
-  GOOGLE_API_KEY: z.string().optional().default(""),
+  GOOGLE_SERVICE_ACCOUNT_KEY: z.string().optional().default(""),
   GDRIVE_MAX_FILES: z.coerce.number().default(25),
   TAVILY_MAX_RESULTS: z.coerce.number().default(5),
   TAVILY_SEARCH_DEPTH: z.enum(["basic", "advanced"]).default("advanced"),

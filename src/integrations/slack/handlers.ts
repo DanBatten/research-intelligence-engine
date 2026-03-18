@@ -99,15 +99,15 @@ async function runPipelineAsync(
 
     // Download Google Drive files
     logger.info(
-      { driveLinksCount: driveLinks.length, hasApiKey: !!config.GOOGLE_API_KEY },
+      { driveLinksCount: driveLinks.length, hasApiKey: !!config.GOOGLE_SERVICE_ACCOUNT_KEY },
       "Drive download check"
     );
     if (driveLinks.length > 0) {
-      if (!config.GOOGLE_API_KEY) {
+      if (!config.GOOGLE_SERVICE_ACCOUNT_KEY) {
         await client.chat.postMessage({
           channel,
           thread_ts: threadTs,
-          text: "I detected a Google Drive link but no Google API key is configured. Please set `GOOGLE_API_KEY` to enable Drive downloads.",
+          text: "I detected a Google Drive link but no service account is configured. Please set `GOOGLE_SERVICE_ACCOUNT_KEY` to enable Drive downloads.",
         });
       } else {
         try {
@@ -250,7 +250,7 @@ export function registerHandlers(app: App) {
     // Detect Google Drive links
     const driveLinks = extractDriveLinks(text);
     logger.info(
-      { driveLinks, fileIds, hasApiKey: !!config.GOOGLE_API_KEY },
+      { driveLinks, fileIds, hasApiKey: !!config.GOOGLE_SERVICE_ACCOUNT_KEY },
       "Parsed message attachments"
     );
 
@@ -274,7 +274,7 @@ export function registerHandlers(app: App) {
 
     // Acknowledge
     const ackParts = [`Research queued for *${intent.projectName}*.`];
-    if (driveLinks.length > 0 && config.GOOGLE_API_KEY) {
+    if (driveLinks.length > 0 && config.GOOGLE_SERVICE_ACCOUNT_KEY) {
       const folderCount = driveLinks.filter((l) => l.type === "folder").length;
       const fileCount = driveLinks.filter((l) => l.type === "file").length;
       const linkDesc = [

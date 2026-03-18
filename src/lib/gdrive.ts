@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { config } from "../config.js";
@@ -33,6 +34,11 @@ export interface DriveDownloadResult {
   errors: DownloadError[];
 }
 
+interface ServiceAccountKey {
+  client_email: string;
+  private_key: string;
+}
+
 // ── URL Extraction ─────────────────────────────────────────────────────
 
 const FOLDER_PATTERN =
@@ -63,6 +69,76 @@ export function extractDriveLinks(text: string): DriveLink[] {
   return links;
 }
 
+// ── Service Account JWT Auth ───────────────────────────────────────────
+
+const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+let cachedToken: { accessToken: string; expiresAt: number } | null = null;
+
+function base64url(data: string | Buffer): string {
+  const buf = typeof data === "string" ? Buffer.from(data) : data;
+  return buf.toString("base64url");
+}
+
+function parseServiceAccountKey(): ServiceAccountKey {
+  const raw = config.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not configured");
+  return JSON.parse(raw) as ServiceAccountKey;
+}
+
+async function getAccessToken(): Promise<string> {
+  // Return cached token if still valid (with 60s buffer)
+  if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
+    return cachedToken.accessToken;
+  }
+
+  const sa = parseServiceAccountKey();
+  const now = Math.floor(Date.now() / 1000);
+
+  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64url(
+    JSON.stringify({
+      iss: sa.client_email,
+      scope: SCOPE,
+      aud: TOKEN_URL,
+      iat: now,
+      exp: now + 3600,
+    })
+  );
+
+  const signInput = `${header}.${payload}`;
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(signInput);
+  const signature = sign.sign(sa.private_key, "base64url");
+
+  const jwt = `${signInput}.${signature}`;
+
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${jwt}`,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to get access token: ${res.status} ${body}`);
+  }
+
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+  };
+
+  cachedToken = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+
+  logger.info("Obtained Google Drive access token");
+  return cachedToken.accessToken;
+}
+
 // ── REST helpers ───────────────────────────────────────────────────────
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
@@ -85,8 +161,10 @@ const WORKSPACE_EXPORT_MAP: Record<string, { mimeType: string; ext: string }> =
   };
 
 async function driveGet(url: string): Promise<Response> {
-  const sep = url.includes("?") ? "&" : "?";
-  return fetch(`${url}${sep}key=${config.GOOGLE_API_KEY}`);
+  const token = await getAccessToken();
+  return fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
@@ -101,7 +179,7 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
     const body = await res.text();
     if (res.status === 403 || res.status === 404) {
       throw new Error(
-        "Folder is not shared publicly. Please set sharing to 'Anyone with the link can view' and try again."
+        "Cannot access folder. Ensure the folder is shared with the service account or 'Anyone with the link'."
       );
     }
     throw new Error(`Drive API error ${res.status}: ${body}`);
@@ -109,8 +187,8 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
 
   const text = await res.text();
   logger.info(
-    { folderId, status: res.status, body: text.slice(0, 500) },
-    "Drive folder listing raw response"
+    { folderId, status: res.status, bodyPreview: text.slice(0, 300) },
+    "Drive folder listing response"
   );
   const data = JSON.parse(text) as { files?: DriveFile[] };
   return data.files ?? [];
@@ -125,7 +203,7 @@ async function getFileMetadata(fileId: string): Promise<DriveFile> {
     const body = await res.text();
     if (res.status === 403 || res.status === 404) {
       throw new Error(
-        "File is not shared publicly. Please set sharing to 'Anyone with the link can view' and try again."
+        "Cannot access file. Ensure the file is shared with the service account or 'Anyone with the link'."
       );
     }
     throw new Error(`Drive API error ${res.status}: ${body}`);
@@ -172,7 +250,7 @@ export async function downloadDriveFile(
   if (!res.ok) {
     const body = await res.text();
     if (res.status === 403 || res.status === 404) {
-      throw new Error("File is not shared publicly");
+      throw new Error("Cannot access file for download");
     }
     throw new Error(`Download failed (${res.status}): ${body}`);
   }
