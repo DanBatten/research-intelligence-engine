@@ -30,6 +30,7 @@ export interface NotionPageIds {
 export interface PipelineState {
   projectName: string;
   brandOverview: string;
+  fileNames?: string[];
   topics?: ResearchTopic[];
   overlapCheck?: string;
   topicResults?: TopicState[];

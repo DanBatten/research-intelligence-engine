@@ -8,10 +8,19 @@ export interface ParsedDocument {
 }
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const SKIP_EXTENSIONS = new Set([
+  ".m4a", ".mp3", ".mp4", ".mov", ".avi", ".wav", ".aac", ".flac", ".ogg",
+  ".wmv", ".mkv", ".webm", ".zip", ".tar", ".gz", ".rar", ".7z",
+  ".exe", ".dmg", ".iso", ".bin", ".textclipping",
+]);
 
 export async function parseFile(filePath: string): Promise<ParsedDocument> {
   const ext = path.extname(filePath).toLowerCase();
   const fileName = path.basename(filePath);
+
+  if (SKIP_EXTENSIONS.has(ext)) {
+    throw new Error(`Unsupported file type: ${ext}`);
+  }
 
   if (ext === ".pdf") {
     const pdfParse = (await import("pdf-parse")).default;

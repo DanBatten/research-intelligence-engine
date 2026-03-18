@@ -294,7 +294,7 @@ export class PipelineRunner {
   async run(): Promise<PipelineState> {
     // Initialize Notion project page
     try {
-      await this.notion?.initProject(this.state.projectName, this.state.brandOverview);
+      await this.notion?.initProject(this.state.projectName, this.state.brandOverview, this.state.fileNames);
     } catch (err) {
       logger.warn({ error: (err as Error).message }, "Notion init failed, continuing without Notion");
       this.notion = undefined;

@@ -73,7 +73,7 @@ export class NotionExporter {
 
   // --- Incremental export methods ---
 
-  async initProject(projectName: string, brandOverview: string): Promise<void> {
+  async initProject(projectName: string, brandOverview: string, fileNames?: string[]): Promise<void> {
     if (this.pageIds.projectPageId) return; // Already initialized (resume)
 
     // Create project page with status callout as first block
@@ -101,12 +101,20 @@ export class NotionExporter {
     const children = await this.client.blocks.children.list({ block_id: page.id });
     this.pageIds.statusBlockId = children.results[0]!.id;
 
-    // Create Brand Overview page
+    // Create Brand Overview page with just the source file list (not raw content)
+    const overviewLines = ["Source documents used for this research:\n"];
+    if (fileNames && fileNames.length > 0) {
+      for (const name of fileNames) {
+        overviewLines.push(`- ${name}`);
+      }
+    } else {
+      overviewLines.push("_No documents provided — research based on web sources only._");
+    }
     await this.createPage(
       page.id,
       "Brand Overview",
       "\uD83E\uDDE0",
-      textToBlocks(brandOverview)
+      textToBlocks(overviewLines.join("\n"))
     );
 
     logger.info({ projectPageId: page.id }, "Notion project initialized");

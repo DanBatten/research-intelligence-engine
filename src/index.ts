@@ -67,7 +67,7 @@ async function main() {
   logger.info({ sessionDir }, "Starting pipeline");
 
   const runner = new PipelineRunner(
-    { projectName: "CLI Research", brandOverview },
+    { projectName: "CLI Research", brandOverview, fileNames: docs.map((d) => d.fileName) },
     {
       sessionDir,
       onProgress: (event) => {

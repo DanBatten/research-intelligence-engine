@@ -180,8 +180,9 @@ async function runPipelineAsync(
     const notion = new NotionExporter();
 
     // Create pipeline runner with Notion wired in
+    const fileNames = docs.map((d) => d.fileName);
     const runner = new PipelineRunner(
-      { projectName, brandOverview },
+      { projectName, brandOverview, fileNames },
       {
         sessionDir,
         notion,
