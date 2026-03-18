@@ -168,27 +168,11 @@ async function driveGet(url: string): Promise<Response> {
 }
 
 export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
-  // First verify the service account can see the folder itself
-  const folderCheckUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name`;
-  const folderRes = await driveGet(folderCheckUrl);
-  if (!folderRes.ok) {
-    const body = await folderRes.text();
-    logger.warn(
-      { folderId, status: folderRes.status, body: body.slice(0, 300) },
-      "Cannot access folder directly — sharing may not be set up"
-    );
-    throw new Error(
-      `Cannot access folder (${folderRes.status}). Share the folder with the service account email as Viewer.`
-    );
-  }
-  const folderMeta = await folderRes.json();
-  logger.info({ folderId, folderName: (folderMeta as any).name }, "Folder access confirmed");
-
   const q = encodeURIComponent(
     `'${folderId}' in parents and trashed = false`
   );
   const fields = encodeURIComponent("files(id,name,mimeType,size)");
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=1000`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`;
 
   const res = await driveGet(url);
   if (!res.ok) {
@@ -207,7 +191,7 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
 
 async function getFileMetadata(fileId: string): Promise<DriveFile> {
   const fields = encodeURIComponent("id,name,mimeType,size");
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=${fields}`;
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=${fields}&supportsAllDrives=true`;
 
   const res = await driveGet(url);
   if (!res.ok) {
@@ -253,7 +237,7 @@ export async function downloadDriveFile(
     res = await driveGet(url);
     destName = file.name.replace(/\.[^.]+$/, "") + exportInfo.ext;
   } else {
-    const url = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+    const url = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media&supportsAllDrives=true`;
     res = await driveGet(url);
     destName = file.name;
   }
