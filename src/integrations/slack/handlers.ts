@@ -9,6 +9,11 @@ import { callStructured } from "../../lib/llm.js";
 import { parseFile, combineDocuments } from "../../parsers/index.js";
 import { PipelineRunner } from "../../pipeline/runner.js";
 import { NotionExporter } from "../notion/exporter.js";
+import {
+  extractDriveLinks,
+  downloadDriveLinks,
+  type DriveLink,
+} from "../../lib/gdrive.js";
 import { postProgress } from "./progress.js";
 
 const IntentSchema = z.object({
@@ -63,6 +68,7 @@ async function runPipelineAsync(
   userId: string,
   userMessage: string,
   fileIds: string[],
+  driveLinks: DriveLink[],
   projectName: string
 ) {
   const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -88,6 +94,55 @@ async function runPipelineAsync(
           thread_ts: threadTs,
           text: `Warning: Could not download a file (${(err as Error).message}). Continuing with remaining documents.`,
         });
+      }
+    }
+
+    // Download Google Drive files
+    if (driveLinks.length > 0) {
+      if (!config.GOOGLE_API_KEY) {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: "I detected a Google Drive link but no Google API key is configured. Please set `GOOGLE_API_KEY` to enable Drive downloads.",
+        });
+      } else {
+        try {
+          const driveResult = await downloadDriveLinks(driveLinks, uploadsDir);
+
+          for (const df of driveResult.files) {
+            filePaths.push(df.filePath);
+            logger.info(
+              { name: df.originalName, filePath: df.filePath },
+              "Downloaded Drive file"
+            );
+          }
+
+          if (driveResult.truncated) {
+            await client.chat.postMessage({
+              channel,
+              thread_ts: threadTs,
+              text: `Warning: Google Drive folder contained more than ${config.GDRIVE_MAX_FILES} files. Only the first ${config.GDRIVE_MAX_FILES} were downloaded.`,
+            });
+          }
+
+          for (const de of driveResult.errors) {
+            await client.chat.postMessage({
+              channel,
+              thread_ts: threadTs,
+              text: `Warning: Could not download Drive file "${de.fileName}" (${de.message}). Continuing with remaining documents.`,
+            });
+          }
+        } catch (err) {
+          logger.error(
+            { error: (err as Error).message },
+            "Drive download failed"
+          );
+          await client.chat.postMessage({
+            channel,
+            thread_ts: threadTs,
+            text: `Warning: Google Drive download failed (${(err as Error).message}). Continuing with any other files.`,
+          });
+        }
       }
     }
 
@@ -184,8 +239,12 @@ export function registerHandlers(app: App) {
       }
     }
 
+    // Detect Google Drive links
+    const driveLinks = extractDriveLinks(text);
+
     // Parse intent
-    const intent = await parseUserIntent(text, fileIds.length > 0);
+    const hasFiles = fileIds.length > 0 || driveLinks.length > 0;
+    const intent = await parseUserIntent(text, hasFiles);
 
     if (intent.needsClarification) {
       await client.chat.postMessage({
@@ -216,6 +275,7 @@ export function registerHandlers(app: App) {
       userId,
       text,
       fileIds,
+      driveLinks,
       intent.projectName
     ).catch((err) => {
       logger.error(err, "Unhandled error in pipeline async");
