@@ -211,4 +211,79 @@ export class NotionExporter {
       synthesisToBlocks(synthesis)
     );
   }
+
+  async uploadSharedBrain(filename: string, content: Buffer): Promise<void> {
+    if (!this.pageIds.projectPageId) return;
+
+    const apiKey = config.NOTION_API_KEY;
+    const baseUrl = "https://api.notion.com";
+
+    // Step 1: Create file upload
+    const createRes = await fetch(`${baseUrl}/v1/file_uploads`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Notion-Version": "2024-11-15",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ filename }),
+    });
+
+    if (!createRes.ok) {
+      throw new Error(`Notion file upload create failed: ${createRes.status} ${await createRes.text()}`);
+    }
+
+    const { id: uploadId, upload_url } = (await createRes.json()) as {
+      id: string;
+      upload_url: string;
+    };
+
+    // Step 2: Send file bytes
+    const boundary = `----FormBoundary${Date.now()}`;
+    const header = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: text/markdown\r\n\r\n`;
+    const footer = `\r\n--${boundary}--\r\n`;
+
+    const body = Buffer.concat([
+      Buffer.from(header),
+      content,
+      Buffer.from(footer),
+    ]);
+
+    const uploadRes = await fetch(upload_url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Notion-Version": "2024-11-15",
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    });
+
+    if (!uploadRes.ok) {
+      throw new Error(`Notion file upload send failed: ${uploadRes.status} ${await uploadRes.text()}`);
+    }
+
+    // Step 3: Attach file block to project page
+    await this.client.blocks.children.append({
+      block_id: this.pageIds.projectPageId,
+      children: [
+        {
+          object: "block",
+          type: "file" as any,
+          file: {
+            type: "file_upload" as any,
+            file_upload: { id: uploadId },
+            caption: [
+              {
+                type: "text",
+                text: { content: "Research Brain — upload to Claude Projects" },
+              },
+            ],
+          },
+        } as any,
+      ],
+    });
+
+    logger.info({ filename, uploadId }, "Shared brain uploaded to Notion");
+  }
 }

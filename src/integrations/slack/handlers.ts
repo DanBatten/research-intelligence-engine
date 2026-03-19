@@ -15,6 +15,7 @@ import {
   type DriveLink,
 } from "../../lib/gdrive.js";
 import { postProgress } from "./progress.js";
+import { compileSharedBrain } from "../../export/shared-brain.js";
 
 const IntentSchema = z.object({
   projectName: z.string(),
@@ -192,7 +193,36 @@ async function runPipelineAsync(
     );
 
     // Run pipeline (Notion pages are created incrementally during the run)
-    await runner.run();
+    const finalState = await runner.run();
+
+    // Compile and distribute shared brain export
+    try {
+      const { content, filename } = compileSharedBrain(finalState);
+
+      // Upload to Slack thread
+      await client.files.uploadV2({
+        channel_id: channel,
+        thread_ts: threadTs,
+        filename,
+        file: content,
+        initial_comment: `Here's the research brain for *${projectName}*. Upload this file to your Claude Projects folder for shared brand context.`,
+      });
+
+      // Upload to Notion project page
+      try {
+        await notion.uploadSharedBrain(filename, content);
+      } catch (err) {
+        logger.warn(
+          { error: (err as Error).message },
+          "Failed to upload shared brain to Notion"
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { error: (err as Error).message },
+        "Failed to compile/upload shared brain export"
+      );
+    }
 
     const notionUrl = notion.getProjectUrl();
     await client.chat.postMessage({
