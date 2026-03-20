@@ -198,29 +198,38 @@ async function runPipelineAsync(
     // Compile and distribute shared brain export
     try {
       const { content, filename } = compileSharedBrain(finalState);
+      logger.info({ filename, bytes: content.length }, "Shared brain compiled");
 
       // Upload to Slack thread
-      await client.files.uploadV2({
-        channel_id: channel,
-        thread_ts: threadTs,
-        filename,
-        file: content,
-        initial_comment: `Here's the research brain for *${projectName}*. Upload this file to your Claude Projects folder for shared brand context.`,
-      });
+      try {
+        await client.files.uploadV2({
+          channel_id: channel,
+          thread_ts: threadTs,
+          filename,
+          file: content,
+          initial_comment: `Here's the research brain for *${projectName}*. Upload this file to your Claude Projects folder for shared brand context.`,
+        });
+        logger.info("Shared brain uploaded to Slack");
+      } catch (err) {
+        logger.warn(
+          { error: (err as Error).message, stack: (err as Error).stack },
+          "Failed to upload shared brain to Slack"
+        );
+      }
 
       // Upload to Notion project page
       try {
         await notion.uploadSharedBrain(filename, content);
       } catch (err) {
         logger.warn(
-          { error: (err as Error).message },
+          { error: (err as Error).message, stack: (err as Error).stack },
           "Failed to upload shared brain to Notion"
         );
       }
     } catch (err) {
-      logger.warn(
-        { error: (err as Error).message },
-        "Failed to compile/upload shared brain export"
+      logger.error(
+        { error: (err as Error).message, stack: (err as Error).stack },
+        "Failed to compile shared brain export"
       );
     }
 

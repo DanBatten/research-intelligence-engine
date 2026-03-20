@@ -13,9 +13,11 @@ export async function tavilySearch(query: string): Promise<TavilyResult[]> {
 
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.TAVILY_API_KEY}`,
+    },
     body: JSON.stringify({
-      api_key: config.TAVILY_API_KEY,
       query,
       search_depth: config.TAVILY_SEARCH_DEPTH,
       max_results: config.TAVILY_MAX_RESULTS,
