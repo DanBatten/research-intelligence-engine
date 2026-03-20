@@ -25,7 +25,9 @@ export async function tavilySearch(query: string): Promise<TavilyResult[]> {
   });
 
   if (!response.ok) {
-    throw new Error(`Tavily search failed: ${response.status}`);
+    const body = await response.text();
+    logger.warn({ status: response.status, body }, "Tavily API error response");
+    throw new Error(`Tavily search failed: ${response.status} ${body}`);
   }
 
   const data = (await response.json()) as { results: TavilyResult[] };

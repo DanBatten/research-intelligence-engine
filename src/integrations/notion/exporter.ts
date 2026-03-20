@@ -263,26 +263,37 @@ export class NotionExporter {
       throw new Error(`Notion file upload send failed: ${uploadRes.status} ${await uploadRes.text()}`);
     }
 
-    // Step 3: Attach file block to project page
-    await this.client.blocks.children.append({
-      block_id: this.pageIds.projectPageId,
-      children: [
-        {
-          object: "block",
-          type: "file" as any,
-          file: {
-            type: "file_upload" as any,
-            file_upload: { id: uploadId },
-            caption: [
-              {
-                type: "text",
-                text: { content: "Research Brain — upload to Claude Projects" },
-              },
-            ],
+    // Step 3: Attach file block to project page (raw fetch — SDK pins old Notion-Version)
+    const attachRes = await fetch(`${baseUrl}/v1/blocks/${this.pageIds.projectPageId}/children`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Notion-Version": "2024-11-15",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        children: [
+          {
+            object: "block",
+            type: "file",
+            file: {
+              type: "file_upload",
+              file_upload: { id: uploadId },
+              caption: [
+                {
+                  type: "text",
+                  text: { content: "Research Brain — upload to Claude Projects" },
+                },
+              ],
+            },
           },
-        } as any,
-      ],
+        ],
+      }),
     });
+
+    if (!attachRes.ok) {
+      throw new Error(`Notion file attach failed: ${attachRes.status} ${await attachRes.text()}`);
+    }
 
     logger.info({ filename, uploadId }, "Shared brain uploaded to Notion");
   }
