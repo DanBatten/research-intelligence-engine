@@ -63,6 +63,7 @@ export interface PipelineRunnerOptions {
   maxRetries?: number;
   retryDelayMs?: number;
   notion?: import("../integrations/notion/exporter.js").NotionExporter;
+  signal?: AbortSignal;
 }
 
 export type {

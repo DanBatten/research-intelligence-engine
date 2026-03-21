@@ -26,7 +26,7 @@ const IntentSchema = z.object({
 
 // Keyed by userId — allows concurrent pipelines across users,
 // but prevents the same user from double-triggering.
-const activeJobs = new Map<string, string>();
+const activeJobs = new Map<string, { projectName: string; abort: AbortController }>();
 
 async function parseUserIntent(
   text: string,
@@ -70,7 +70,8 @@ async function runPipelineAsync(
   userMessage: string,
   fileIds: string[],
   driveLinks: DriveLink[],
-  projectName: string
+  projectName: string,
+  signal: AbortSignal
 ) {
   const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const sessionDir = path.join(config.SESSIONS_DIR, sessionId);
@@ -187,6 +188,7 @@ async function runPipelineAsync(
       {
         sessionDir,
         notion,
+        signal,
         onProgress: (event) =>
           postProgress(client, channel, threadTs, event),
       }
@@ -233,15 +235,24 @@ async function runPipelineAsync(
         : `Research complete for *${projectName}*!\n\nSession data: \`${sessionDir}\``,
     });
   } catch (err) {
-    logger.error(
-      { error: (err as Error).message, sessionId },
-      "Pipeline failed"
-    );
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: `Pipeline failed for *${projectName}*: ${(err as Error).message}\n\nSession data: \`${sessionDir}\``,
-    });
+    if (signal.aborted) {
+      logger.info({ projectName }, "Pipeline cancelled by user");
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Pipeline cancelled for *${projectName}*.`,
+      });
+    } else {
+      logger.error(
+        { error: (err as Error).message, sessionId },
+        "Pipeline failed"
+      );
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Pipeline failed for *${projectName}*: ${(err as Error).message}\n\nSession data: \`${sessionDir}\``,
+      });
+    }
   } finally {
     activeJobs.delete(userId);
   }
@@ -260,12 +271,25 @@ export function registerHandlers(app: App) {
     const text = event.text;
     const threadTs = event.ts;
 
-    // Check for active job per user
-    if (activeJobs.has(userId)) {
+    // Handle cancel request
+    if (/^\s*cancel\s*$/i.test(text) && activeJobs.has(userId)) {
+      const job = activeJobs.get(userId)!;
+      job.abort.abort();
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,
-        text: `You already have a research pipeline running (*${activeJobs.get(userId)}*). Please wait for it to complete.`,
+        text: `Cancelling pipeline for *${job.projectName}*... it will stop after the current stage finishes.`,
+      });
+      return;
+    }
+
+    // Check for active job per user
+    if (activeJobs.has(userId)) {
+      const job = activeJobs.get(userId)!;
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `You already have a research pipeline running (*${job.projectName}*). Send "cancel" to stop it.`,
       });
       return;
     }
@@ -301,7 +325,8 @@ export function registerHandlers(app: App) {
     }
 
     // Mark as active for this user
-    activeJobs.set(userId, intent.projectName);
+    const abortController = new AbortController();
+    activeJobs.set(userId, { projectName: intent.projectName, abort: abortController });
 
     // Acknowledge
     const ackParts = [`Research queued for *${intent.projectName}*.`];
@@ -333,7 +358,8 @@ export function registerHandlers(app: App) {
       text,
       fileIds,
       driveLinks,
-      intent.projectName
+      intent.projectName,
+      abortController.signal
     ).catch((err) => {
       logger.error(err, "Unhandled error in pipeline async");
     });

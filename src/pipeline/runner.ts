@@ -41,6 +41,7 @@ export class PipelineRunner {
   private maxRetries: number;
   private retryDelayMs: number;
   private notion: NotionExporter | undefined;
+  private signal: AbortSignal | undefined;
 
   constructor(state: PipelineState, opts: PipelineRunnerOptions) {
     this.state = state;
@@ -49,6 +50,13 @@ export class PipelineRunner {
     this.maxRetries = opts.maxRetries ?? config.MAX_RETRIES_PER_STAGE;
     this.retryDelayMs = opts.retryDelayMs ?? config.RETRY_DELAY_MS;
     this.notion = opts.notion;
+    this.signal = opts.signal;
+  }
+
+  private checkAborted(): void {
+    if (this.signal?.aborted) {
+      throw new Error("Pipeline cancelled");
+    }
   }
 
   static async resume(
@@ -131,6 +139,7 @@ export class PipelineRunner {
     input: TIn,
     topicIndex?: number
   ): Promise<TOut> {
+    this.checkAborted();
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         this.onProgress({
