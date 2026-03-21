@@ -211,26 +211,17 @@ async function runPipelineAsync(
         });
         logger.info("Shared brain uploaded to Slack");
       } catch (err) {
-        logger.warn(
-          { error: (err as Error).message, stack: (err as Error).stack },
-          "Failed to upload shared brain to Slack"
-        );
+        logger.warn(`Failed to upload shared brain to Slack: ${(err as Error).message}`);
       }
 
       // Upload to Notion project page
       try {
         await notion.uploadSharedBrain(filename, content);
       } catch (err) {
-        logger.warn(
-          { error: (err as Error).message, stack: (err as Error).stack },
-          "Failed to upload shared brain to Notion"
-        );
+        logger.warn(`Failed to upload shared brain to Notion: ${(err as Error).message}`);
       }
     } catch (err) {
-      logger.error(
-        { error: (err as Error).message, stack: (err as Error).stack },
-        "Failed to compile shared brain export"
-      );
+      logger.error(`Failed to compile shared brain export: ${(err as Error).message}`);
     }
 
     const notionUrl = notion.getProjectUrl();

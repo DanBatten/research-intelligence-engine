@@ -223,7 +223,7 @@ export class NotionExporter {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Notion-Version": "2024-11-15",
+        "Notion-Version": "2026-03-11",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ filename }),
@@ -253,7 +253,7 @@ export class NotionExporter {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Notion-Version": "2024-11-15",
+        "Notion-Version": "2026-03-11",
         "Content-Type": `multipart/form-data; boundary=${boundary}`,
       },
       body,
@@ -268,7 +268,7 @@ export class NotionExporter {
       method: "PATCH",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Notion-Version": "2024-11-15",
+        "Notion-Version": "2026-03-11",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
