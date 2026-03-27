@@ -1,5 +1,31 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Session data (may contain research outputs)
 sessions/
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
 *.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# TypeScript
+*.tsbuildinfo

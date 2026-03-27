@@ -1,7 +1,7 @@
 {
-  "name": "deep-research-v2",
+  "name": "research-intelligence-engine",
   "version": "1.0.0",
-  "description": "10-stage structured research pipeline with Slack bot + Notion export",
+  "description": "10-stage AI-powered research pipeline — turns brand briefs into structured strategic intelligence via Slack, Claude, Tavily, and Notion",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
